@@ -13,34 +13,61 @@ coreos:
           [Service]
           ExecStartPre=/usr/bin/etcdctl --endpoint=http://172.17.4.51:2379 set /coreos.com/network/config '{ "Network": "10.2.0.0/16" }'
     - name: docker.service
-      drop-ins:
-      - name: 50-flannel.conf
-        content: |
-          [Unit]
-          Requires=flanneld.service
-          After=flanneld.service
+      command: stop
+    - name: rkt-api.service
+      enable: true
+      command: start
+      content: |
+        [Unit]
+        Before=kubelet.service
+        [Service]
+        ExecStart=/usr/bin/rkt api-service
+        Restart=always
+        RestartSec=10
+        [Install]
+        RequiredBy=kubelet.service
     - name: kubelet.service
       enable: true
       command: start
       content: |
+        [Unit]
+        Wants=flanneld.service
         [Service]
         EnvironmentFile=/etc/environment
         Environment=KUBELET_ACI=quay.io/coreos/hyperkube
         Environment=KUBELET_VERSION=v1.5.1_coreos.0
+        Environment="RKT_OPTS=--uuid-file-save=/var/run/kubelet-pod.uuid \
+          --volume dns,kind=host,source=/etc/resolv.conf \
+          --mount volume=dns,target=/etc/resolv.conf \
+          --volume rkt,kind=host,source=/opt/bin/host-rkt \
+          --mount volume=rkt,target=/usr/bin/rkt \
+          --volume var-lib-rkt,kind=host,source=/var/lib/rkt \
+          --mount volume=var-lib-rkt,target=/var/lib/rkt \
+          --volume stage,kind=host,source=/tmp \
+          --mount volume=stage,target=/tmp \
+          --volume var-log,kind=host,source=/var/log \
+          --mount volume=var-log,target=/var/log"
         ExecStartPre=/bin/mkdir -p /etc/kubernetes/manifests
         ExecStartPre=/bin/mkdir -p /srv/kubernetes/manifests
         ExecStartPre=/bin/mkdir -p /etc/kubernetes/checkpoint-secrets
+        ExecStartPre=-/usr/bin/rkt rm --uuid-file=/var/run/kubelet-pod.uuid
         ExecStart=/usr/lib/coreos/kubelet-wrapper \
           --kubeconfig=/etc/kubernetes/kubeconfig \
           --require-kubeconfig \
           --lock-file=/var/run/lock/kubelet.lock \
           --exit-on-lock-contention \
           --pod-manifest-path=/etc/kubernetes/manifests \
+          --container-runtime=rkt \
+          --rkt-path=/usr/bin/rkt \
           --allow-privileged \
           --hostname-override=${COREOS_PUBLIC_IPV4} \
           --node-labels=master=true \
+          --network-plugin=cni \
+          --cni-conf-dir=/etc/kubernetes/cni/net.d \
           --cluster_dns=10.3.0.10 \
-          --cluster_domain=cluster.local
+          --cluster_domain=cluster.local \
+          --v=4
+        ExecStop=-/usr/bin/rkt stop --uuid-file=/var/run/kubelet-pod.uuid
         Restart=always
         RestartSec=5
 
@@ -48,6 +75,22 @@ coreos:
         WantedBy=multi-user.target
 
 write_files:
+  - path: /opt/bin/host-rkt
+    permissions: 0755
+    owner: root:root
+    content: |
+      #!/bin/sh
+      # see https://github.com/coreos/rkt/issues/2878
+      exec nsenter -m -u -i -n -p -t 1 -- /usr/bin/rkt "$@"
+  - path: /etc/kubernetes/cni/net.d/10-flannel.conf
+    content: |
+        {
+            "name": "podnet",
+            "type": "flannel",
+            "delegate": {
+                "isDefaultGateway": true
+            }
+        }
   - path: "/etc/kubernetes/kubeconfig"
     permissions: "0644"
     owner: core

@@ -266,6 +266,8 @@ metadata:
 spec:
   template:
     metadata:
+      annotations:
+        rkt.alpha.kubernetes.io/stage1-name-override: coreos.com/rkt/stage1-fly
       labels:
         k8s-app: kube-proxy
     spec:
@@ -294,6 +296,9 @@ spec:
         - name: etc-kubernetes
           mountPath: /etc/kubernetes
           readOnly: true
+        - mountPath: /var/run/dbus
+          name: dbus
+          readOnly: false
       volumes:
       - hostPath:
           path: /usr/share/ca-certificates
@@ -301,6 +306,9 @@ spec:
       - name: etc-kubernetes
         hostPath:
           path: /etc/kubernetes
+      - hostPath:
+          path: /var/run/dbus
+        name: dbus
 `)
 	DNSDeploymentTemplate = []byte(`apiVersion: extensions/v1beta1
 kind: Deployment
