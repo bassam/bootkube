@@ -113,22 +113,36 @@ spec:
 `)
 
 	APIServerTemplate = []byte(`apiVersion: "extensions/v1beta1"
-kind: DaemonSet
+kind: Deployment
 metadata:
   name: kube-apiserver
   namespace: kube-system
   labels:
     k8s-app: kube-apiserver
 spec:
+  replicas: 3
   template:
     metadata:
       labels:
         k8s-app: kube-apiserver
       annotations:
         checkpointer.alpha.coreos.com/checkpoint: "true"
+        scheduler.alpha.kubernetes.io/affinity: >
+            {
+              "podAntiAffinity": {
+                "requiredDuringSchedulingRequiredDuringExecution": [{
+                  "labelSelector": {
+                    "matchExpressions": [{
+                      "key": "app",
+                      "operator": "In",
+                      "values": ["kube-apiserver"]
+                    }]
+                  },
+                  "topologyKey": "kubernetes.io/hostname"
+                }]
+              }
+            }
     spec:
-      nodeSelector:
-        master: "true"
       hostNetwork: true
       containers:
       - name: kube-apiserver
@@ -138,6 +152,7 @@ spec:
         - apiserver
         - --bind-address=0.0.0.0
         - --secure-port=443
+        - --apiserver-count=3
         - --insecure-port=8080
         - --advertise-address=$(POD_IP)
         - --etcd-servers={{ range $i, $e := .EtcdServers }}{{ if $i }},{{end}}{{ $e }}{{end}}
@@ -185,8 +200,6 @@ spec:
       labels:
         k8s-app: pod-checkpoint-installer
     spec:
-      nodeSelector:
-        master: "true"
       hostNetwork: true
       containers:
       - name: checkpoint-installer
